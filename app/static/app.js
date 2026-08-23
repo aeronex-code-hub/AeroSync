@@ -1398,9 +1398,12 @@ async function renderRid(content) {
       <div class="metric-card"><span>Aircraft Detected</span><strong>${esc(data.active_targets||0)}</strong></div>
       <div class="metric-card"><span>Active Tracks</span><strong>${esc(data.active_tracks||0)}</strong></div>
     </div>
-    <div class="card"><div class="panel-title"><h3>Detected Aircraft</h3><span class="pill">${esc(targets.length)}</span></div><div class="rid-aircraft-grid">
-      ${targets.map(x=>`<div class="rid-aircraft-card"><div class="card-title-row"><div><h3>${esc(x.model||"RID Aircraft")}</h3><small>${esc(x.uav_id||x.id)}</small></div><span class="pill ${x.status==='live'?'ok':''}">${esc(x.status||'')}</span></div><div class="rid-aircraft-facts"><span><small>Altitude</small><strong>${esc(x.altitude??'-')} m</strong></span><span><small>Distance</small><strong>${esc(x.distance??'-')} m</strong></span><span><small>Speed</small><strong>${esc(x.speed??'-')} m/s</strong></span><span><small>Frequency</small><strong>${esc(x.frequency??'-')}</strong></span><span><small>Heading</small><strong>${esc(x.heading??x.azimuth??'-')}°</strong></span><span><small>Source</small><strong>${esc(x.source_name||x.source_id||'')}</strong></span></div><div class="toolbar-actions"><button class="secondary small-btn" onclick="openRidTrack('${escAttr(x.track_id||x.trace_id||'')}')">Details</button><button class="secondary small-btn" onclick="openRidMap('${escAttr(x.id)}')">Map</button></div></div>`).join('')||'<div class="empty-state">No RID aircraft detected.</div>'}
-    </div></div>
+    <div class="rid-active-strip">
+      <div class="rid-active-strip-title"><strong>Active Tracks</strong><span class="pill">${esc(targets.length)}</span></div>
+      <div class="rid-active-strip-list">
+        ${targets.map(x=>`<button class="rid-active-track" onclick="openRidTrack('${escAttr(x.track_id||x.trace_id||'')}')"><strong>${esc(x.model||x.uav_id||x.id||'RID Aircraft')}</strong><span>${esc(x.uav_id||x.id||'')}</span><small>${esc(x.altitude??'-')} m | ${esc(x.speed??'-')} m/s | ${esc(x.heading??x.azimuth??'-')}° | ${esc(x.source_name||x.source_id||'')}</small></button>`).join('')||'<span class="rid-active-empty">No active RID aircraft detected.</span>'}
+      </div>
+    </div>
     <div class="rid-message-grid">
       <div class="card rid-message-card"><div class="panel-title"><h3>Live Messages</h3><span class="pill">${esc(data.message_count||0)}</span></div><div class="rid-live-list">${live.map(m=>`<div class="rid-live-row"><strong>${esc(ridMessageTypeLabel(m))}</strong><span>${esc(m.device_name||m.source_sn||'')}</span><small>${esc(formatDubaiTime(m.received_at))}</small></div>`).join('')||'<div class="empty-state">No RID messages received.</div>'}</div></div>
       <div class="card rid-message-card"><div class="panel-title"><h3>Message Status</h3></div><div class="mqtt-status-list">${status.map(x=>`<div class="mqtt-status-item ${escAttr(x.level||'info')}"><strong>${esc(x.title||'RID')}</strong><span>${esc(x.message||'')}</span><small>${esc(formatDubaiTime(x.time))}</small></div>`).join('')||'<div class="empty-state">No RID status yet.</div>'}</div></div>
@@ -1855,17 +1858,45 @@ function startMediaRefresh() {
 }
 
 async function renderLiveMap(content) {
-  const data=await api("/api/map"); if(!isActiveContent(content,"Live Map"))return;
+  const [data,ridData]=await Promise.all([api("/api/map"),api("/api/rid").catch(()=>({targets:[]}))]); if(!isActiveContent(content,"Live Map"))return;
   const cfg=data.settings||{}, devices=data.devices||[], onlineDevices=data.online_devices||devices;
   const onlineCount=data.online_count??onlineDevices.length, visibleCount=devices.length;
+  const ridTargets=(ridData.targets||[]).filter(x=>Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude)));
   content.innerHTML=`
     <div class="module-header map-header"><div><h1>Live Map</h1></div><div class="toolbar-actions"><span class="pill">${esc(cfg.mode||'online').toUpperCase()}</span>${hasPermission('settings')?'<button class="secondary small-btn" onclick="openMapSettings()">Map Settings</button>':''}</div></div>
     <div class="map-kpi-grid compact-map-kpis">
       <div class="metric-card devices-online-card"><span>Devices Online</span><strong>${esc(onlineCount)}</strong><small>Dock ${esc(data.dock_count||0)} | Drone ${esc(data.drone_count||0)} | O4 GS ${esc(data.o4_count||0)} | RID ${esc(data.rid_count||0)}</small></div>
       <div class="metric-card"><span>On Map</span><strong>${esc(visibleCount)}</strong></div>
     </div>
-    <section class="map-workspace card map-workspace-full"><div class="map-toolbar"><div><strong>Device Position Map</strong></div><div class="toolbar-actions"><button class="secondary small-btn" onclick="openMapHistory()">History</button><button class="secondary small-btn" onclick="refreshLiveMap()">Refresh</button><button class="secondary small-btn" onclick="fitMapDevices()">Fit Devices</button></div></div><div id="mapCanvas" class="map-canvas"><div class="map-loading">Loading map...</div></div></section>`;
-  await initMap(data); const seconds=Math.max(2,Number(cfg.refresh_seconds||5)); mapRefreshTimer=setInterval(refreshLiveMap,seconds*1000);
+    <section class="map-workspace card map-workspace-full"><div class="map-toolbar"><div><strong>Device Position Map</strong></div><div class="toolbar-actions"><button class="secondary small-btn" onclick="openMapHistory()">History</button><button class="secondary small-btn" onclick="refreshLiveMap()">Refresh</button><button class="secondary small-btn" onclick="fitMapDevices()">Fit Devices</button></div></div><div class="map-stage"><div id="mapCanvas" class="map-canvas"><div class="map-loading">Loading map...</div></div><div id="ridMapAlerts" class="rid-map-alerts">${ridMapAlertsHtml(ridTargets)}</div></div></section>`;
+  await initMap(data); updateRidMapTargets(ridTargets); const seconds=Math.max(2,Number(cfg.refresh_seconds||5)); mapRefreshTimer=setInterval(refreshLiveMap,seconds*1000);
+}
+
+function ridMapAlertsHtml(targets){
+  return (targets||[]).slice(0,5).map(x=>`<button class="rid-map-alert" onclick="focusRidTarget('${escAttr(x.id||x.uav_id||x.track_id||'')}','${escAttr(x.track_id||x.trace_id||'')}')"><div><strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><span>${esc(x.uav_id||x.id||'')}</span></div><small>${esc(x.altitude??'-')} m | ${esc(x.speed??'-')} m/s | ${esc(x.heading??x.azimuth??'-')}°${x.frequency?` | ${esc(x.frequency)}`:''}</small><em>${esc(formatDubaiTime(x.last_seen||x.recorded_at))}</em></button>`).join('');
+}
+
+function updateRidMapTargets(targets){
+  window._ridMapTargets={};
+  const seen=new Set();
+  (targets||[]).forEach(x=>{
+    const lat=Number(x.lat??x.latitude), lng=Number(x.lng??x.longitude); if(!Number.isFinite(lat)||!Number.isFinite(lng)||!mapInstance||!window.L)return;
+    const id=String(x.id||x.uav_id||x.track_id||`${lat},${lng}`), key=`rid:${id}`; seen.add(key); window._ridMapTargets[id]=x;
+    const icon=L.divIcon({className:'map-pin-icon',html:`<div class="map-pin drone online rid-target-pin"><span></span></div>`,iconSize:[30,30],iconAnchor:[15,15]});
+    const popup=`<strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><br>RID/UAV ID: ${esc(x.uav_id||x.id||'--')}<br>Altitude: ${esc(x.altitude??'-')} m<br>Speed: ${esc(x.speed??'-')} m/s<br>Heading: ${esc(x.heading??x.azimuth??'-')}°<br>Source: ${esc(x.source_name||x.source_id||'--')}`;
+    if(!mapMarkers[key]) mapMarkers[key]=L.marker([lat,lng],{icon}).addTo(mapInstance); else mapMarkers[key].setLatLng([lat,lng]);
+    mapMarkers[key].bindPopup(popup);
+  });
+  Object.keys(mapMarkers).filter(k=>k.startsWith('rid:')&&!seen.has(k)).forEach(k=>{mapInstance?.removeLayer(mapMarkers[k]);delete mapMarkers[k]});
+}
+
+function focusRidTarget(id,trackId=''){
+  const target=(window._ridMapTargets||{})[String(id)]; const marker=mapMarkers[`rid:${id}`];
+  if(marker&&mapInstance){mapInstance.setView(marker.getLatLng(),Math.max(mapInstance.getZoom(),16));marker.openPopup();}
+  if(!target)return;
+  let modal=document.getElementById('ridAircraftDetailModal'); if(!modal){modal=document.createElement('div');modal.id='ridAircraftDetailModal';modal.className='aerosync-modal';document.body.appendChild(modal);} modal.classList.add('show');
+  const fields=[['RID / UAV ID',target.uav_id||target.id],['Model',target.model],['Track ID',target.track_id||target.trace_id],['Latitude',target.lat??target.latitude],['Longitude',target.lng??target.longitude],['Altitude',target.altitude],['Real Height',target.height],['Speed',target.speed],['Heading / Track Angle',target.heading??target.azimuth],['Frequency',target.frequency],['Source',target.source_name||target.source_id],['Last Seen',formatDubaiTime(target.last_seen||target.recorded_at)],['Pilot Lat',target.pilot_lat],['Pilot Lon',target.pilot_lng],['Home Lat',target.home_lat],['Home Lon',target.home_lng],['Distance',target.distance],['RSSI',target.rssi],['SNR',target.snr],['Confidence',target.confidence]];
+  modal.innerHTML=`<div class="aerosync-modal-panel rid-aircraft-detail-modal"><div class="card-title-row"><div><h2>${esc(target.model||'RID Aircraft')}</h2><small>${esc(target.uav_id||target.id||'')}</small></div><button class="secondary" onclick="document.getElementById('ridAircraftDetailModal')?.classList.remove('show')">Close</button></div><div class="rid-track-detail-grid">${fields.map(([k,v])=>`<div><span>${esc(k)}</span><strong>${esc(v??'-')}</strong></div>`).join('')}</div><div class="toolbar-actions">${trackId?`<button class="primary" onclick="document.getElementById('ridAircraftDetailModal')?.classList.remove('show');openRidTrack('${escAttr(trackId)}')">Track Details / History</button>`:''}</div></div>`;
 }
 
 function openMapSettings(){
@@ -2211,11 +2242,14 @@ function updateMapMarkers(devices) {
 
 async function refreshLiveMap() {
   if (activePage !== "Live Map") return;
-  const data = await api("/api/map");
+  const [data,ridData]=await Promise.all([api("/api/map"),api("/api/rid").catch(()=>({targets:[]}))]);
   const list = document.getElementById("mapDeviceList");
   const onlineDevices = data.online_devices || data.devices || [];
   if (list) list.innerHTML = onlineDevices.length ? onlineDevices.map(deviceListItem).join("") : `<div class="empty-state">No device data yet. Waiting for MQTT status or GPS payloads.</div>`;
   updateMapMarkers(data.devices || []);
+  const ridTargets=(ridData.targets||[]).filter(x=>Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude)));
+  updateRidMapTargets(ridTargets);
+  const alertBox=document.getElementById('ridMapAlerts'); if(alertBox)alertBox.innerHTML=ridMapAlertsHtml(ridTargets);
 }
 
 function focusMapDevice(sn) {
