@@ -1373,7 +1373,7 @@ function ridCompactPayload(m) {
 function ridSelectedMessageHtml(m) {
   if(!m) return '<div class="empty-state">Select a message from Last 20 Received Messages.</div>';
   const rows=ridCompactPayload(m);
-  return `<div class="rid-selected-head"><strong>${esc(ridMessageTypeLabel(m))}</strong><span>${esc(formatDubaiTime(m.received_at))}</span></div><div class="kv-grid compact-kv">${rows.map(([k,v])=>`<span>${esc(k)}</span><strong>${esc(String(v))}</strong>`).join('')}</div>`;
+  return `<div class="rid-selected-head"><strong>${esc(ridMessageTypeLabel(m))}</strong><span>${esc(formatDubaiTime(m.received_at))}</span></div><div class="rid-selected-grid">${rows.map(([k,v])=>`<div class="rid-selected-field"><span>${esc(k)}</span><strong>${esc(String(v))}</strong></div>`).join('')}</div>`;
 }
 
 async function renderRid(content) {
@@ -1398,9 +1398,6 @@ async function renderRid(content) {
       <div class="metric-card"><span>Aircraft Detected</span><strong>${esc(data.active_targets||0)}</strong></div>
       <div class="metric-card"><span>Active Tracks</span><strong>${esc(data.active_tracks||0)}</strong></div>
     </div>
-    <div class="card rid-receivers-card"><div class="panel-title"><h3>RID Receiver Devices</h3></div><div class="rid-device-grid">
-      ${sources.map(x=>`<div class="rid-device-card"><div class="card-title-row"><div><h3>${esc(x.name||x.serial_no||x.id)}</h3><small>${esc(x.brand||"")} | ${esc(x.serial_no||x.id||"")}</small></div>${ridStatusPill(x.status)}</div><div class="kv-grid compact-kv"><span>Last Seen</span><strong>${x.last_seen?esc(formatDubaiTime(x.last_seen)):"--"}</strong></div>${ridSourceDetails(x)}</div>`).join("")||'<div class="empty-state">No RID devices registered.</div>'}
-    </div></div>
     <div class="card"><div class="panel-title"><h3>Detected Aircraft</h3><span class="pill">${esc(targets.length)}</span></div><div class="rid-aircraft-grid">
       ${targets.map(x=>`<div class="rid-aircraft-card"><div class="card-title-row"><div><h3>${esc(x.model||"RID Aircraft")}</h3><small>${esc(x.uav_id||x.id)}</small></div><span class="pill ${x.status==='live'?'ok':''}">${esc(x.status||'')}</span></div><div class="rid-aircraft-facts"><span><small>Altitude</small><strong>${esc(x.altitude??'-')} m</strong></span><span><small>Distance</small><strong>${esc(x.distance??'-')} m</strong></span><span><small>Speed</small><strong>${esc(x.speed??'-')} m/s</strong></span><span><small>Frequency</small><strong>${esc(x.frequency??'-')}</strong></span><span><small>Heading</small><strong>${esc(x.heading??x.azimuth??'-')}°</strong></span><span><small>Source</small><strong>${esc(x.source_name||x.source_id||'')}</strong></span></div><div class="toolbar-actions"><button class="secondary small-btn" onclick="openRidTrack('${escAttr(x.track_id||x.trace_id||'')}')">Details</button><button class="secondary small-btn" onclick="openRidMap('${escAttr(x.id)}')">Map</button></div></div>`).join('')||'<div class="empty-state">No RID aircraft detected.</div>'}
     </div></div>
@@ -1861,14 +1858,11 @@ async function renderLiveMap(content) {
   const data=await api("/api/map"); if(!isActiveContent(content,"Live Map"))return;
   const cfg=data.settings||{}, devices=data.devices||[], onlineDevices=data.online_devices||devices;
   const onlineCount=data.online_count??onlineDevices.length, visibleCount=devices.length;
-  const lastSeen=onlineDevices[0]?.last_seen||devices[0]?.last_seen||data.updated_at;
   content.innerHTML=`
     <div class="module-header map-header"><div><h1>Live Map</h1></div><div class="toolbar-actions"><span class="pill">${esc(cfg.mode||'online').toUpperCase()}</span>${hasPermission('settings')?'<button class="secondary small-btn" onclick="openMapSettings()">Map Settings</button>':''}</div></div>
     <div class="map-kpi-grid compact-map-kpis">
       <div class="metric-card devices-online-card"><span>Devices Online</span><strong>${esc(onlineCount)}</strong><small>Dock ${esc(data.dock_count||0)} | Drone ${esc(data.drone_count||0)} | O4 GS ${esc(data.o4_count||0)} | RID ${esc(data.rid_count||0)}</small></div>
       <div class="metric-card"><span>On Map</span><strong>${esc(visibleCount)}</strong></div>
-      <div class="metric-card"><span>Last Update</span><strong>${esc(formatDubaiTime(lastSeen))}</strong></div>
-      <div class="metric-card"><span>Map Mode</span><strong>${esc((cfg.mode||'online').toUpperCase())}</strong></div>
     </div>
     <section class="map-workspace card map-workspace-full"><div class="map-toolbar"><div><strong>Device Position Map</strong></div><div class="toolbar-actions"><button class="secondary small-btn" onclick="openMapHistory()">History</button><button class="secondary small-btn" onclick="refreshLiveMap()">Refresh</button><button class="secondary small-btn" onclick="fitMapDevices()">Fit Devices</button></div></div><div id="mapCanvas" class="map-canvas"><div class="map-loading">Loading map...</div></div></section>`;
   await initMap(data); const seconds=Math.max(2,Number(cfg.refresh_seconds||5)); mapRefreshTimer=setInterval(refreshLiveMap,seconds*1000);
