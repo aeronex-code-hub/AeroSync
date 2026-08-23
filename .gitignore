@@ -1,0 +1,59 @@
+﻿# Runtime / generated data
+data/
+logs/
+backups/
+temp/
+tmp/
+
+# Database/runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Secrets / credentials
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+secrets/
+credentials/
+
+# License runtime/generated files
+license.dat
+license.json
+licenses/
+generated_licenses/
+
+# MQTT / RID captured data
+mqtt_capture.log
+rid_capture.log
+mqtt_history/
+rid_history/
+rid_snapshots/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+
+# Release archives
+*.zip
