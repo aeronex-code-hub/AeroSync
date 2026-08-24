@@ -2335,3 +2335,11 @@ button, input, select {
 .map-stage{position:relative;min-height:0;height:100%}.map-stage>.map-canvas{height:100%}.rid-map-alerts{position:absolute;top:10px;right:10px;z-index:650;display:flex;flex-direction:column;gap:6px;width:min(300px,34vw);pointer-events:none}.rid-map-alert{pointer-events:auto;width:100%;padding:8px 9px;border:1px solid rgba(110,155,255,.65);border-radius:8px;background:rgba(20,39,75,.94);backdrop-filter:blur(5px);color:#fff;text-align:left;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.24)}.rid-map-alert:hover{border-color:#8eb5ff;background:rgba(28,52,98,.97)}.rid-map-alert>div{display:flex;justify-content:space-between;gap:8px}.rid-map-alert strong{font-size:12px}.rid-map-alert span,.rid-map-alert small,.rid-map-alert em{font-size:10px;color:#c7d5ee;font-style:normal}.rid-map-alert small,.rid-map-alert em{display:block;margin-top:3px}.rid-target-pin{filter:drop-shadow(0 0 5px rgba(73,147,255,.85))}.rid-aircraft-detail-modal{max-width:860px}.map-workspace-full{height:calc(100dvh - 185px);min-height:430px}.map-workspace-full .map-stage{height:calc(100% - 0px)}
 @media(max-width:900px){.rid-active-strip{align-items:flex-start;flex-direction:column}.rid-map-alerts{width:min(270px,48vw)}.map-workspace-full{height:calc(100dvh - 220px);min-height:400px}}
 @media(max-width:620px){.rid-map-alerts{left:8px;right:8px;width:auto}.rid-map-alert{padding:7px}.map-workspace-full{height:calc(100dvh - 250px);min-height:360px}}
+
+/* RID vendor parser/map/raw-stream patch */
+.rid-raw-panel{height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden}
+.rid-raw-panel .raw-filter-grid,.rid-raw-panel>.toolbar-actions,.rid-raw-panel>.card-title-row{flex:0 0 auto}
+.rid-raw-stream{flex:1 1 auto;min-height:0;overflow:auto;border:1px solid var(--border,#263244);border-radius:10px;background:rgba(0,0,0,.18);padding:10px}
+.rid-raw-stream-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.45;color:var(--text,#e5e7eb)}
+.rid-map-card{padding:10px;min-height:0}.rid-map-canvas{height:calc(100vh - 150px);min-height:460px;width:100%;background:#0c1424}
+@media(max-width:760px){.rid-map-canvas{height:68vh;min-height:380px}.rid-raw-panel{height:92vh}}

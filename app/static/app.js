@@ -14,6 +14,8 @@ let mapTileLayer = null;
 let selectedMapDeviceSn = null;
 let mqttRefreshTimer = null;
 let ridRefreshTimer = null;
+let ridRawRefreshTimer = null;
+let ridRawAutoScroll = true;
 let ridSettingsData = null;
 let mqttRawLiveTimer = null;
 let mqttRawLivePaused = false;
@@ -1418,10 +1420,16 @@ function selectRidMessage(id){ window._ridSelectedMessageId=id; if(activePage===
 
 async function openRidRawData(){
   let modal=document.getElementById('ridRawModal'); if(!modal){modal=document.createElement('div');modal.id='ridRawModal';modal.className='aerosync-modal';document.body.appendChild(modal);} modal.classList.add('show');
-  modal.innerHTML=`<div class="aerosync-modal-panel raw-modal-panel"><div class="card-title-row"><h2>RID Raw Data</h2><button class="secondary" onclick="document.getElementById('ridRawModal')?.classList.remove('show')">Close</button></div><div class="raw-filter-grid"><label class="field"><span>Search</span><input id="ridRawSearch"></label><label class="field"><span>RID Receiver</span><input id="ridRawSource"></label><label class="field"><span>Limit</span><select id="ridRawLimit"><option>100</option><option>250</option><option>500</option></select></label></div><div class="toolbar-actions"><button class="primary" onclick="loadRidRawData()">Search</button></div><div id="ridRawResults" class="raw-results"></div></div>`;
-  loadRidRawData();
+  modal.innerHTML=`<div class="aerosync-modal-panel raw-modal-panel rid-raw-panel"><div class="card-title-row"><h2>RID Raw Data</h2><div class="toolbar-actions"><button id="ridRawAutoBtn" class="secondary small-btn" onclick="toggleRidRawAutoScroll()">Auto Scroll ON</button><button class="secondary small-btn" onclick="copyRidRawAll()">Copy All</button><button class="secondary" onclick="closeRidRawData()">Close</button></div></div><div class="raw-filter-grid"><label class="field"><span>Search</span><input id="ridRawSearch"></label><label class="field"><span>RID Receiver</span><input id="ridRawSource"></label><label class="field"><span>Limit</span><select id="ridRawLimit"><option>100</option><option>250</option><option>500</option></select></label></div><div class="toolbar-actions"><button class="primary" onclick="loadRidRawData(false)">Search</button></div><div id="ridRawResults" class="rid-raw-stream"></div></div>`;
+  ridRawAutoScroll=true; await loadRidRawData(true); if(ridRawRefreshTimer)clearInterval(ridRawRefreshTimer); ridRawRefreshTimer=setInterval(()=>{if(document.getElementById('ridRawModal')?.classList.contains('show'))loadRidRawData(true).catch(()=>{});},1500);
 }
-async function loadRidRawData(){ const p=new URLSearchParams(); [['q','ridRawSearch'],['source','ridRawSource'],['limit','ridRawLimit']].forEach(([k,id])=>{const v=document.getElementById(id)?.value?.trim();if(v)p.set(k,v)}); const box=document.getElementById('ridRawResults'); if(box)box.innerHTML='<div class="loading-card">Loading...</div>'; try{const d=await api(`/api/rid/raw?${p}`); const rows=d.messages||[]; if(box)box.innerHTML=rows.length?rows.map((r,i)=>`<div class="raw-message-card"><div class="card-title-row"><div><strong>${esc(r.device_name||r.source_sn||'RID')}</strong><small>${esc(formatDubaiTime(r.received_at))} | ${esc(r.topic||'')}</small></div><button class="secondary small-btn" onclick="copyText(document.getElementById('ridRawPayload${i}').textContent)">Copy</button></div><pre id="ridRawPayload${i}" class="json-box raw-payload">${esc(JSON.stringify(r.payload||{},null,2))}</pre></div>`).join(''):'<div class="empty-state">No RID raw data.</div>';}catch(e){if(box)box.innerHTML=`<div class="warn-card">${esc(e.message)}</div>`;} }
+function closeRidRawData(){document.getElementById('ridRawModal')?.classList.remove('show');if(ridRawRefreshTimer){clearInterval(ridRawRefreshTimer);ridRawRefreshTimer=null;}}
+function toggleRidRawAutoScroll(){ridRawAutoScroll=!ridRawAutoScroll;const b=document.getElementById('ridRawAutoBtn');if(b)b.textContent=`Auto Scroll ${ridRawAutoScroll?'ON':'OFF'}`;}
+function copyRidRawAll(){const el=document.getElementById('ridRawStreamText');if(el)copyText(el.textContent||'');}
+async function loadRidRawData(liveRefresh=false){
+  const p=new URLSearchParams(); [['q','ridRawSearch'],['source','ridRawSource'],['limit','ridRawLimit']].forEach(([k,id])=>{const v=document.getElementById(id)?.value?.trim();if(v)p.set(k,v)}); const box=document.getElementById('ridRawResults'); if(!box)return; if(!liveRefresh)box.innerHTML='<div class="loading-card">Loading...</div>';
+  try{const d=await api(`/api/rid/raw?${p}`); const rows=(d.messages||[]).slice().reverse(); const text=rows.map(r=>`${formatDubaiTime(r.received_at)} | ${r.device_name||r.source_sn||'RID'} | ${r.topic||''}\n${JSON.stringify(r.payload||{},null,2)}`).join('\n\n'); box.innerHTML=rows.length?`<pre id="ridRawStreamText" class="rid-raw-stream-text">${esc(text)}</pre>`:'<div class="empty-state">No RID raw data.</div>'; if(ridRawAutoScroll)box.scrollTop=box.scrollHeight;}catch(e){if(!liveRefresh)box.innerHTML=`<div class="warn-card">${esc(e.message)}</div>`;}
+}
 
 async function openRidHistory(){ let modal=document.getElementById('ridHistoryModal'); if(!modal){modal=document.createElement('div');modal.id='ridHistoryModal';modal.className='aerosync-modal';document.body.appendChild(modal);} modal.classList.add('show'); modal.innerHTML=`<div class="aerosync-modal-panel raw-modal-panel"><div class="card-title-row"><h2>RID History</h2><button class="secondary" onclick="document.getElementById('ridHistoryModal')?.classList.remove('show')">Close</button></div><div class="raw-filter-grid"><label class="field"><span>Track / UAV / Model</span><input id="ridHistorySearch"></label><label class="field"><span>RID Receiver</span><input id="ridHistorySource"></label></div><div class="toolbar-actions"><button class="primary" onclick="loadRidHistory()">Search</button></div><div id="ridHistoryResults" class="raw-results"></div></div>`; loadRidHistory(); }
 async function loadRidHistory(){const p=new URLSearchParams();const q=document.getElementById('ridHistorySearch')?.value?.trim();const src=document.getElementById('ridHistorySource')?.value?.trim();if(q)p.set('q',q);if(src)p.set('source',src);const box=document.getElementById('ridHistoryResults');if(box)box.innerHTML='<div class="loading-card">Loading...</div>';try{const d=await api(`/api/rid/history?${p}`);const rows=d.tracks||[];if(box)box.innerHTML=rows.length?rows.map(x=>`<button class="rid-history-row" onclick="openRidTrack('${escAttr(x.track_id)}')"><span><strong>${esc(x.track_id)}</strong><small>${esc(x.uav_id||'')} | ${esc(x.model||'Unknown')} | ${esc(x.source_name||x.source_id||'')}</small></span><span>${esc(formatDubaiTime(x.history_start||x.first_seen))}</span><span>${esc(x.point_count||0)} updates</span></button>`).join(''):'<div class="empty-state">No RID tracks found.</div>';}catch(e){if(box)box.innerHTML=`<div class="warn-card">${esc(e.message)}</div>`;} }
@@ -1517,23 +1525,31 @@ async function removeRidDevice(serialNo) {
 function openRidMap(selectedId="") {
   if (ridRefreshTimer) { clearInterval(ridRefreshTimer); ridRefreshTimer=null; }
   const content=document.getElementById("content");
-  content.innerHTML=`<div class="page-head"><div><h1>RID Live Map</h1></div><button class="secondary" onclick="goModule('RID')">Back to RID</button></div><div class="card"><div id="ridMapCanvas" class="rid-map-canvas"></div></div>`;
+  content.innerHTML=`<div class="page-head"><div><h1>RID Live Map</h1></div><button class="secondary" onclick="goModule('RID')">Back to RID</button></div><div class="card rid-map-card"><div id="ridMapCanvas" class="rid-map-canvas"><div class="map-loading">Loading map...</div></div></div>`;
   setTimeout(()=>loadRidMap(selectedId),50);
 }
 
 async function loadRidMap(selectedId="") {
   const data=await api("/api/rid");
-  const el=document.getElementById("ridMapCanvas"); if(!el||typeof L==="undefined") return;
-  if (window._ridLeafletMap) { window._ridLeafletMap.remove(); window._ridLeafletMap=null; }
-  const targets=data.targets||[], sources=data.sources||[];
-  let center=[25.2048,55.2708]; const selected=targets.find(x=>String(x.id)===String(selectedId));
-  const first=selected||targets[0]||sources.find(x=>x.lat!=null&&x.lng!=null); if(first) center=[Number(first.lat),Number(first.lng)];
-  const map=L.map(el).setView(center,13); window._ridLeafletMap=map;
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(map);
-  const bounds=[];
-  sources.forEach(x=>{ if(x.lat==null||x.lng==null)return; const p=[Number(x.lat),Number(x.lng)]; bounds.push(p); L.marker(p).addTo(map).bindPopup(`<b>${esc(x.name||x.id)}</b><br>${esc(x.brand||"")}<br>${esc(x.serial_no||x.id||"")}`); });
-  targets.forEach(x=>{ if(x.lat==null||x.lng==null)return; const p=[Number(x.lat),Number(x.lng)]; bounds.push(p); L.marker(p).addTo(map).bindPopup(`<b>${esc(x.model||"RID Aircraft")}</b><br>RID: ${esc(x.uav_id||x.id)}<br>Altitude: ${esc(x.altitude??"-")} m<br>Speed: ${esc(x.speed??"-")} m/s<br>Heading: ${esc(x.heading??"-")}°<br>Source: ${esc(x.source_name||x.source_id||"")}`); const trail=(x.trail||[]).map(t=>[Number(t.lat),Number(t.lng)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1])); if(trail.length>1){L.polyline(trail).addTo(map); trail.forEach(p=>bounds.push(p));} if(x.pilot_lat!=null&&x.pilot_lng!=null){const q=[Number(x.pilot_lat),Number(x.pilot_lng)];bounds.push(q);L.marker(q).addTo(map).bindPopup(`<b>RC / Pilot</b><br>${esc(x.uav_id||x.id)}`);} if(x.home_lat!=null&&x.home_lng!=null){const q=[Number(x.home_lat),Number(x.home_lng)];bounds.push(q);L.marker(q).addTo(map).bindPopup(`<b>Home / Takeoff</b><br>${esc(x.uav_id||x.id)}`);} });
-  if(bounds.length>1) map.fitBounds(bounds,{padding:[30,30]});
+  const el=document.getElementById("ridMapCanvas"); if(!el)return;
+  try{
+    await loadLeaflet(); if(!window.L)return;
+    if(window._ridLeafletMap){window._ridLeafletMap.remove();window._ridLeafletMap=null;}
+    const targets=(data.targets||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng)));
+    const sources=(data.sources||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng)));
+    const cfg=settingsCache?.settings?.modules?.map||{};
+    const selected=targets.find(x=>String(x.id)===String(selectedId)||String(x.uav_id)===String(selectedId));
+    const first=selected||targets[0]||sources[0];
+    const center=first?[Number(first.lat),Number(first.lng)]:[Number(cfg.default_lat||25.2048),Number(cfg.default_lng||55.2708)];
+    const map=L.map(el,{zoomControl:true,attributionControl:true}).setView(center,Number(cfg.default_zoom||12)); window._ridLeafletMap=map;
+    const mode=cfg.mode==='offline'?'offline':'online'; const tileUrl=mode==='offline'?'/map/tiles/{z}/{x}/{y}.png':(cfg.online_tile_url||'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+    L.tileLayer(tileUrl,{maxZoom:20,subdomains:['a','b','c'],attribution:mode==='offline'?'Offline tiles':'OpenStreetMap'}).addTo(map);
+    const bounds=[];
+    sources.forEach(x=>{const p=[Number(x.lat),Number(x.lng)];bounds.push(p);L.marker(p).addTo(map).bindPopup(`<b>${esc(x.name||x.id)}</b><br>${esc(x.brand||'')}<br>${esc(x.serial_no||x.id||'')}`);});
+    targets.forEach(x=>{const p=[Number(x.lat),Number(x.lng)];bounds.push(p);const title=x.model||x.uav_id||'RID Aircraft';L.marker(p).addTo(map).bindPopup(`<b>${esc(title)}</b><br>RID: ${esc(x.uav_id||x.id)}<br>Altitude: ${esc(x.altitude??'-')} m<br>Height: ${esc(x.height??'-')} m<br>Speed: ${esc(x.speed??'-')} m/s<br>Track: ${esc(x.heading??'-')}°<br>Source: ${esc(x.source_name||x.source_id||'')}`);const trail=(x.trail||[]).map(t=>[Number(t.lat),Number(t.lng)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));if(trail.length>1){L.polyline(trail).addTo(map);trail.forEach(p=>bounds.push(p));}if(x.pilot_lat!=null&&x.pilot_lng!=null){const q=[Number(x.pilot_lat),Number(x.pilot_lng)];if(Number.isFinite(q[0])&&Number.isFinite(q[1])){bounds.push(q);L.marker(q).addTo(map).bindPopup(`<b>Operator / Pilot</b><br>${esc(x.uav_id||x.id)}`);}}});
+    if(bounds.length>1)map.fitBounds(bounds,{padding:[30,30]}); else if(selected)map.setView([Number(selected.lat),Number(selected.lng)],Math.max(Number(cfg.default_zoom||12),16));
+    setTimeout(()=>map.invalidateSize(),120);
+  }catch(err){el.innerHTML=`<div class="map-fallback"><strong>RID map unavailable.</strong><p>${esc(err.message||err)}</p></div>`;}
 }
 
 async function renderMqtt(content) {

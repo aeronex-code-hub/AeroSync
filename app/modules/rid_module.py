@@ -173,8 +173,13 @@ class RidModule:
     def _identity_candidates(self, topic, payload):
         candidates = set()
         parts = [p for p in str(topic or "").split("/") if p]
+        # DJI/FH2-style product topic.
         if len(parts) >= 3 and parts[0].lower() == "thing" and parts[1].lower() == "product":
             candidates.add(str(parts[2]).strip())
+        # ArcGine RGS topics always end with the registered receiver SN, including
+        # receiver_json_astm messages whose JSON body intentionally has no RGS SN.
+        if len(parts) >= 3 and parts[0].lower() == "device":
+            candidates.add(str(parts[-1]).strip())
         for d in self._walk_dicts(payload):
             for key in ("sn", "SN", "device_sn", "DeviceSn", "DeviceSN", "serial_no", "SerialNo", "DeviceId", "DeviceID", "device_id"):
                 value = d.get(key) if isinstance(d, dict) else None
@@ -194,31 +199,24 @@ class RidModule:
     def _source_info(self, topic, payload, registered):
         sn = str(registered.get("serial_no") or "")
         brand = str(registered.get("brand") or "ArcGine")
-        source = {}
-        host = {}
+        topic_text = str(topic or "")
+        now = datetime.now(timezone.utc).isoformat()
+
         if brand == "Terjin":
+            source = {}
             for d in self._walk_dicts(payload):
                 device_id = self._first(d, "DeviceId", "DeviceID", "device_id")
                 if device_id not in (None, "") and str(device_id).strip().lower() == sn.lower():
                     source = d
                     break
-            lat = self._first(source, "Latitude", "latitude", "Lat")
-            lng = self._first(source, "Longitude", "longitude", "Lon", "Lng")
-            altitude = self._first(source, "Altitude", "altitude", "Alt")
-            now = datetime.now(timezone.utc).isoformat()
             return {
-                "id": sn,
-                "serial_no": sn,
-                "name": str(registered.get("device_name") or sn),
-                "brand": brand,
-                "status": "online",
-                "last_seen": now,
-                "topic": str(topic or ""),
+                "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn),
+                "brand": brand, "status": "online", "last_seen": now, "topic": topic_text,
                 "device_type": str(self._first(source, "CoDeviceType", "DeviceType", default="") or ""),
                 "device_version": str(self._first(source, "DeviceVersion", default="") or ""),
-                "lat": lat,
-                "lng": lng,
-                "altitude": altitude,
+                "lat": self._first(source, "Latitude", "latitude", "Lat"),
+                "lng": self._first(source, "Longitude", "longitude", "Lon", "Lng"),
+                "altitude": self._first(source, "Altitude", "altitude", "Alt"),
                 "gps_number": self._first(source, "GpsStalliteNum", "GpsSatelliteNum", default=None),
                 "gps_fixed": self._first(source, "GpsLocked", default=None),
                 "temperature": self._first(source, "Temperature", default=None),
@@ -227,70 +225,91 @@ class RidModule:
                 "pitch": self._first(source, "Pitch", default=None),
             }
 
+        # ArcGine documented RGS MQTT interface.
+        if "/receiver_heart/" in topic_text:
+            return {
+                "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn),
+                "brand": brand, "status": "online", "last_seen": now, "last_heartbeat": now,
+                "topic": topic_text, "simcard": self._first(payload, "simcard"),
+                "rssi": self._first(payload, "rssi"), "product_id": self._first(payload, "productid"),
+                "heartbeat_no": self._first(payload, "heartno"), "connection_type": self._first(payload, "conn_type"),
+                "ota_state": self._first(payload, "ota_state"), "battery_percent": self._first(payload, "bat_state"),
+                "device_version": str(self._first(payload, "sys_ver", default="") or ""),
+            }
+        if "/receiver_pos/" in topic_text:
+            gps = payload.get("GPS") if isinstance(payload, dict) and isinstance(payload.get("GPS"), dict) else {}
+            lat = self._first(gps, "latitude", "Lat")
+            lng = self._first(gps, "longitude", "Lng", "Lon")
+            try:
+                if float(lat or 0) == 0 and float(lng or 0) == 0: lat = lng = None
+            except Exception:
+                lat = lng = None
+            return {
+                "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn),
+                "brand": brand, "status": "online", "last_seen": now, "topic": topic_text,
+                "lat": lat, "lng": lng, "altitude": self._first(gps, "altitude"),
+                "gps_fixed": self._first(gps, "fix"), "gps_number": self._first(gps, "nsat"),
+                "gps_hdop": self._first(gps, "HDOP"), "heading": self._first(gps, "COG"),
+                "ground_speed_kmh": self._first(gps, "spkm"), "ground_speed_knots": self._first(gps, "spkn"),
+                "gps_utc": self._first(gps, "UTC"), "gps_date": self._first(gps, "date"),
+            }
+        if topic_text.startswith("device/"):
+            return {"id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn), "brand": brand, "last_seen": now, "topic": topic_text}
+
+        # Backward-compatible generic ArcGine/DJI-style OSD data. This is retained so
+        # existing deployed receivers continue to expose health fields if they publish them.
         data = payload.get("data") if isinstance(payload, dict) else None
-        if isinstance(data, dict) and isinstance(data.get("host"), dict):
-            host = data.get("host") or {}
+        host = data.get("host") if isinstance(data, dict) and isinstance(data.get("host"), dict) else {}
         lat = self._first(host, "latitude", "Latitude", "lat", "Lat")
         lng = self._first(host, "longitude", "Longitude", "lng", "Lng", "lon", "Lon")
         altitude = self._first(host, "height", "Height", "altitude", "Altitude")
         try:
-            if float(lat or 0) == 0 and float(lng or 0) == 0:
-                lat = None
-                lng = None
+            if float(lat or 0) == 0 and float(lng or 0) == 0: lat = lng = None
         except Exception:
-            lat = None
-            lng = None
+            lat = lng = None
         battery = host.get("battery") if isinstance(host.get("battery"), dict) else {}
         network = host.get("network_state") if isinstance(host.get("network_state"), dict) else {}
         position = host.get("position_state") if isinstance(host.get("position_state"), dict) else {}
         storage = host.get("storage") if isinstance(host.get("storage"), dict) else {}
         sub = host.get("sub_device") if isinstance(host.get("sub_device"), dict) else {}
-        now = datetime.now(timezone.utc).isoformat()
         return {
-            "id": sn,
-            "serial_no": sn,
-            "name": str(registered.get("device_name") or sn),
-            "brand": brand,
-            "status": "online",
-            "last_seen": now,
-            "topic": str(topic or ""),
+            "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn), "brand": brand,
+            "status": "online", "last_seen": now, "topic": topic_text,
             "biz_code": str(payload.get("biz_code") or "") if isinstance(payload, dict) else "",
-            "lat": lat,
-            "lng": lng,
-            "altitude": altitude,
-            "heading": self._first(host, "heading", "Heading"),
+            "lat": lat, "lng": lng, "altitude": altitude, "heading": self._first(host, "heading", "Heading"),
             "country": self._first(host, "country", "Country", default=""),
             "battery_percent": self._first(battery, "capacity_percent", "capacity", default=None),
             "battery_voltage": self._first(battery, "voltage", default=self._first(host, "battery_voltage")),
             "battery_temperature": self._first(battery, "temperature", default=None),
-            "network_type": self._first(network, "type", default=None),
-            "network_quality": self._first(network, "quality", default=None),
-            "network_rate": self._first(network, "rate", default=None),
-            "gps_number": self._first(position, "gps_number", default=None),
-            "rtk_number": self._first(position, "rtk_number", default=None),
-            "gps_fixed": self._first(position, "is_fixed", default=None),
-            "poe_status": self._first(host, "poe_status", default=None),
-            "power_mode": self._first(host, "power_mode", "electric_supply_mode", default=None),
-            "storage_total": self._first(storage, "total", default=None),
-            "storage_used": self._first(storage, "used", default=None),
-            "device_paired": self._first(sub, "device_paired", default=None),
-            "sub_device_online_status": self._first(sub, "device_online_status", default=None),
+            "network_type": self._first(network, "type", default=None), "network_quality": self._first(network, "quality", default=None),
+            "network_rate": self._first(network, "rate", default=None), "gps_number": self._first(position, "gps_number", default=None),
+            "rtk_number": self._first(position, "rtk_number", default=None), "gps_fixed": self._first(position, "is_fixed", default=None),
+            "poe_status": self._first(host, "poe_status", default=None), "power_mode": self._first(host, "power_mode", "electric_supply_mode", default=None),
+            "storage_total": self._first(storage, "total", default=None), "storage_used": self._first(storage, "used", default=None),
+            "device_paired": self._first(sub, "device_paired", default=None), "sub_device_online_status": self._first(sub, "device_online_status", default=None),
             "mode_code": self._first(host, "mode_code", "flighttask_step_code", default=None),
         }
 
-    def _targets(self, payload, brand):
+    def _targets(self, topic, payload, brand):
         found = []
+        topic_text = str(topic or "")
+        if brand == "ArcGine" and "/receiver_json_astm/" in topic_text and isinstance(payload, dict):
+            uid = self._first(payload, "uas_id")
+            lat = self._first(payload, "latitude")
+            lng = self._first(payload, "longitude")
+            if uid not in (None, "") and lat not in (None, "") and lng not in (None, ""):
+                found.append((str(uid), payload, "arcgine_astm"))
+            return found
+        if brand == "ArcGine" and "/adsb/" in topic_text:
+            # ADS-B is deliberately kept separate from Remote ID aircraft counts/tracks.
+            return found
         for d in self._walk_dicts(payload):
-            # Terjin MQTT v1.1.12 uses UavId/UavLat/UavLon and related fields.
-            # ArcGine is normalized through the same field aliases until a vendor-specific
-            # aircraft payload requires an additional parser.
             uid = self._first(d, "UavId", "uav_id", "uas_id", "aircraft_id", "rid_id")
             lat = self._first(d, "UavLat", "uav_lat")
             lng = self._first(d, "UavLon", "uav_lon")
             if uid not in (None, "") and lat not in (None, "") and lng not in (None, ""):
-                found.append((str(uid), d))
+                found.append((str(uid), d, "terjin" if brand == "Terjin" else "generic"))
         return found
-
 
     def handle_mqtt(self, item, raw_payload=None):
         try:
@@ -314,44 +333,57 @@ class RidModule:
                     merged[key] = value
             self.sources[sn] = merged
 
-            for uid, d in self._targets(payload, brand):
-                target = {
-                    "id": uid,
-                    "uav_id": uid,
-                    "model": str(self._first(d, "UavModel", "uav_model", "model", default="Unknown") or "Unknown"),
-                    "lat": self._first(d, "UavLat", "uav_lat"),
-                    "lng": self._first(d, "UavLon", "uav_lon"),
-                    "altitude": self._first(d, "UavAlt", "uav_alt", "altitude", "Alt"),
-                    "height": self._first(d, "UavHeight", "uav_height", "height"),
-                    "speed": self._first(d, "Velocity", "velocity", "speed"),
-                    "heading": self._first(d, "Yaw", "yaw", "heading"),
-                    "pilot_lat": self._first(d, "PilotLat", "pilot_lat"),
-                    "pilot_lng": self._first(d, "PilotLon", "pilot_lon", "PilotLng"),
-                    "home_lat": self._first(d, "HomeLat", "home_lat"),
-                    "home_lng": self._first(d, "HomeLon", "home_lon", "HomeLng"),
-                    "trace_id": str(self._first(d, "TraceId", "trace_id", default="") or ""),
-                    "user_id": str(self._first(d, "UserId", "user_id", "operator_id", default="") or ""),
-                    "frequency": self._first(d, "Frequency", "frequency"),
-                    "band": self._first(d, "Band", "band"),
-                    "distance": self._first(d, "UavDistance", "uav_distance", "Distance", "distance"),
-                    "azimuth": self._first(d, "UavAzimuth", "uav_azimuth", "Azimuth", "azimuth"),
-                    "rssi": self._first(d, "Rssi", "RSSI", "rssi"),
-                    "snr": self._first(d, "SNR", "snr"),
-                    "confidence": self._first(d, "Papr", "papr", "confidence"),
-                    "start_from": self._first(d, "StartFrom", "start_from"),
-                    "duration": self._first(d, "Duration", "duration"),
-                    "area_flag": self._first(d, "AreaFlag", "area_flag"),
-                    "whitelist_id": self._first(d, "WhiteListId", "WhitelistId", "whitelist_id"),
-                    "image": self._first(d, "Image", "image"),
-                    "source_id": sn,
-                    "source_name": str(registered.get("device_name") or sn),
-                    "source_brand": brand,
-                    "topic": str(item.get("topic") or ""),
-                    "first_seen": self.targets.get(uid, {}).get("first_seen", now),
-                    "last_seen": now,
-                    "status": "live",
-                }
+            for uid, d, parser_kind in self._targets(item.get("topic"), payload, brand):
                 old = self.targets.get(uid, {})
+                if parser_kind == "arcgine_astm":
+                    known = {"uas_id","uas_id_type","ua_type","latitude","longitude","geodetic_altitude","pressure_altitude","timestamp","timestamp_accuracy","baromete_accuracy","vertical_accuracy","horizontal_accuracy","speed_accuracy","vertical_speed","speed","track_direction","height","height_type","operational_status","operation_description","operator_id","auth_Data","operator_latitude","operator_longitude","operator_altitude","operator_location_type","operating_area_radius","operator_category","operator_class","operator_classification","operating_area_count","operating_area_floor","operating_area_ceiling"}
+                    target = {
+                        "id": uid, "uav_id": uid, "model": str(old.get("model") or ""),
+                        "uas_id_type": self._first(d,"uas_id_type"), "ua_type": self._first(d,"ua_type"),
+                        "lat": self._first(d,"latitude"), "lng": self._first(d,"longitude"),
+                        "altitude": self._first(d,"geodetic_altitude"), "pressure_altitude": self._first(d,"pressure_altitude"),
+                        "height": self._first(d,"height"), "height_type": self._first(d,"height_type"),
+                        "speed": self._first(d,"speed"), "vertical_speed": self._first(d,"vertical_speed"),
+                        "heading": self._first(d,"track_direction"), "operational_status": self._first(d,"operational_status"),
+                        "operation_description": self._first(d,"operation_description",default=""),
+                        "user_id": str(self._first(d,"operator_id",default="") or ""),
+                        "pilot_lat": self._first(d,"operator_latitude"), "pilot_lng": self._first(d,"operator_longitude"),
+                        "operator_altitude": self._first(d,"operator_altitude"), "operator_location_type": self._first(d,"operator_location_type"),
+                        "auth_data": self._first(d,"auth_Data"), "rid_timestamp": self._first(d,"timestamp"),
+                        "timestamp_accuracy": self._first(d,"timestamp_accuracy"), "barometric_accuracy": self._first(d,"baromete_accuracy"),
+                        "vertical_accuracy": self._first(d,"vertical_accuracy"), "horizontal_accuracy": self._first(d,"horizontal_accuracy"),
+                        "speed_accuracy": self._first(d,"speed_accuracy"), "operating_area_radius": self._first(d,"operating_area_radius"),
+                        "operator_category": self._first(d,"operator_category"), "operator_class": self._first(d,"operator_class"),
+                        "operator_classification": self._first(d,"operator_classification"), "operating_area_count": self._first(d,"operating_area_count"),
+                        "operating_area_floor": self._first(d,"operating_area_floor"), "operating_area_ceiling": self._first(d,"operating_area_ceiling"),
+                        "additional_data": {k:v for k,v in d.items() if k not in known},
+                    }
+                else:
+                    target = {
+                        "id": uid, "uav_id": uid,
+                        "model": str(self._first(d, "UavModel", "uav_model", "model", default=old.get("model") or "") or ""),
+                        "lat": self._first(d, "UavLat", "uav_lat"), "lng": self._first(d, "UavLon", "uav_lon"),
+                        "altitude": self._first(d, "UavAlt", "uav_alt", "altitude", "Alt"), "height": self._first(d, "UavHeight", "uav_height", "height"),
+                        "speed": self._first(d, "Velocity", "velocity", "speed"), "heading": self._first(d, "Yaw", "yaw", "heading"),
+                        "pilot_lat": self._first(d, "PilotLat", "pilot_lat"), "pilot_lng": self._first(d, "PilotLon", "pilot_lon", "PilotLng"),
+                        "home_lat": self._first(d, "HomeLat", "home_lat"), "home_lng": self._first(d, "HomeLon", "home_lon", "HomeLng"),
+                        "trace_id": str(self._first(d, "TraceId", "trace_id", default="") or ""),
+                        "user_id": str(self._first(d, "UserId", "user_id", "operator_id", default="") or ""),
+                        "frequency": self._first(d, "Frequency", "frequency"), "band": self._first(d, "Band", "band"),
+                        "distance": self._first(d, "UavDistance", "uav_distance", "Distance", "distance"),
+                        "azimuth": self._first(d, "UavAzimuth", "uav_azimuth", "Azimuth", "azimuth"),
+                        "rssi": self._first(d, "Rssi", "RSSI", "rssi"), "snr": self._first(d, "SNR", "snr"),
+                        "confidence": self._first(d, "Papr", "papr", "confidence"), "start_from": self._first(d, "StartFrom", "start_from"),
+                        "duration": self._first(d, "Duration", "duration"), "area_flag": self._first(d, "AreaFlag", "area_flag"),
+                        "whitelist_id": self._first(d, "WhiteListId", "WhitelistId", "whitelist_id"), "image": self._first(d, "Image", "image"),
+                    }
+                seen_by = list(old.get("seen_by") or [])
+                if sn not in seen_by: seen_by.append(sn)
+                target.update({
+                    "source_id": sn, "source_name": str(registered.get("device_name") or sn), "source_brand": brand,
+                    "seen_by": seen_by[-10:], "topic": str(item.get("topic") or ""),
+                    "first_seen": old.get("first_seen", now), "last_seen": now, "status": "live",
+                })
                 trail = list(old.get("trail") or [])
                 try:
                     point = {"lat": float(target["lat"]), "lng": float(target["lng"]), "time": now}
@@ -407,9 +439,10 @@ class RidModule:
                 src["brand"] = str(registered.get("brand") or "ArcGine")
                 last_seen = src.get("last_seen")
                 online = False
-                if last_seen:
+                health_seen = src.get("last_heartbeat") if src.get("brand") == "ArcGine" and src.get("last_heartbeat") else last_seen
+                if health_seen:
                     try:
-                        online = (now - datetime.fromisoformat(str(last_seen)).timestamp()) <= self.OFFLINE_SECONDS
+                        online = (now - datetime.fromisoformat(str(health_seen)).timestamp()) <= self.OFFLINE_SECONDS
                     except Exception:
                         online = False
                 src["status"] = "online" if online else "offline"
