@@ -449,7 +449,7 @@ function renderShell() {
         <nav class="nav">
           ${allowedModuleNames().map(name => `<button data-page="${esc(name)}">${esc(moduleDisplayNames[name] || name)}</button>`).join("")}
         </nav>
-        <div class="footer">AERO SYNC<br>Designed &amp; Developed by AERO NEX FZCO<br>漏 2025 Aero Nex FZCO. All Rights Reserved.<br>Contact us : Support@aeronex.ae</div>
+        <div class="footer">2025 Aero Nex FZCO<br>Contact us : <a href="mailto:Support@aeronex.ae">Support@aeronex.ae</a></div>
       </aside>
       <main class="main">
         <header class="topbar">
@@ -1545,7 +1545,8 @@ async function loadRidMap(selectedId="") {
     const mode=cfg.mode==='offline'?'offline':'online'; const tileUrl=mode==='offline'?'/map/tiles/{z}/{x}/{y}.png':(cfg.online_tile_url||'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
     L.tileLayer(tileUrl,{maxZoom:20,subdomains:['a','b','c'],attribution:mode==='offline'?'Offline tiles':'OpenStreetMap'}).addTo(map);
     const bounds=[];
-    sources.forEach(x=>{const p=[Number(x.lat),Number(x.lng)];bounds.push(p);L.marker(p).addTo(map).bindPopup(`<b>${esc(x.name||x.id)}</b><br>${esc(x.brand||'')}<br>${esc(x.serial_no||x.id||'')}`);});
+    const ridReceiverIcon=L.icon({iconUrl:'/static/assets/rid-receiver.svg',iconSize:[40,40],iconAnchor:[20,36],popupAnchor:[0,-34]});
+    sources.forEach(x=>{const p=[Number(x.lat),Number(x.lng)];bounds.push(p);L.marker(p,{icon:ridReceiverIcon}).addTo(map).bindPopup(`<b>${esc(x.name||x.id)}</b><br>${esc(x.brand||'')}<br>${esc(x.serial_no||x.id||'')}`);});
     targets.forEach(x=>{const p=[Number(x.lat),Number(x.lng)];bounds.push(p);const title=x.model||x.uav_id||'RID Aircraft';L.marker(p).addTo(map).bindPopup(`<b>${esc(title)}</b><br>RID: ${esc(x.uav_id||x.id)}<br>Altitude: ${esc(x.altitude??'-')} m<br>Height: ${esc(x.height??'-')} m<br>Speed: ${esc(x.speed??'-')} m/s<br>Track: ${esc(x.heading??'-')}°<br>Source: ${esc(x.source_name||x.source_id||'')}`);const trail=(x.trail||[]).map(t=>[Number(t.lat),Number(t.lng)]).filter(p=>Number.isFinite(p[0])&&Number.isFinite(p[1]));if(trail.length>1){L.polyline(trail).addTo(map);trail.forEach(p=>bounds.push(p));}if(x.pilot_lat!=null&&x.pilot_lng!=null){const q=[Number(x.pilot_lat),Number(x.pilot_lng)];if(Number.isFinite(q[0])&&Number.isFinite(q[1])){bounds.push(q);L.marker(q).addTo(map).bindPopup(`<b>Operator / Pilot</b><br>${esc(x.uav_id||x.id)}`);}}});
     if(bounds.length>1)map.fitBounds(bounds,{padding:[30,30]}); else if(selected)map.setView([Number(selected.lat),Number(selected.lng)],Math.max(Number(cfg.default_zoom||12),16));
     setTimeout(()=>map.invalidateSize(),120);
@@ -1877,7 +1878,7 @@ async function renderLiveMap(content) {
   const [data,ridData]=await Promise.all([api("/api/map"),api("/api/rid").catch(()=>({targets:[]}))]); if(!isActiveContent(content,"Live Map"))return;
   const cfg=data.settings||{}, devices=data.devices||[], onlineDevices=data.online_devices||devices;
   const onlineCount=data.online_count??onlineDevices.length, visibleCount=devices.length;
-  const ridTargets=(ridData.targets||[]).filter(x=>Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude)));
+  const ridTargets=(ridData.targets||[]).filter(x=>String(x.status||'live').toLowerCase()==='live');
   content.innerHTML=`
     <div class="module-header map-header"><div><h1>Live Map</h1></div><div class="toolbar-actions"><span class="pill">${esc(cfg.mode||'online').toUpperCase()}</span>${hasPermission('settings')?'<button class="secondary small-btn" onclick="openMapSettings()">Map Settings</button>':''}</div></div>
     <div class="map-kpi-grid compact-map-kpis">
@@ -1889,7 +1890,7 @@ async function renderLiveMap(content) {
 }
 
 function ridMapAlertsHtml(targets){
-  return (targets||[]).slice(0,5).map(x=>`<button class="rid-map-alert" onclick="focusRidTarget('${escAttr(x.id||x.uav_id||x.track_id||'')}','${escAttr(x.track_id||x.trace_id||'')}')"><div><strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><span>${esc(x.uav_id||x.id||'')}</span></div><small>${esc(x.altitude??'-')} m | ${esc(x.speed??'-')} m/s | ${esc(x.heading??x.azimuth??'-')}°${x.frequency?` | ${esc(x.frequency)}`:''}</small><em>${esc(formatDubaiTime(x.last_seen||x.recorded_at))}</em></button>`).join('');
+  return (targets||[]).slice(0,5).map(x=>{const hasPos=Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude));return `<button class="rid-map-alert" onclick="focusRidTarget('${escAttr(x.id||x.uav_id||x.track_id||'')}','${escAttr(x.track_id||x.trace_id||'')}')"><div><strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><span>${esc(x.uav_id||x.id||'')}</span></div><small>${hasPos?`${esc(x.altitude??'-')} m | ${esc(x.speed??'-')} m/s | ${esc(x.heading??x.azimuth??'-')}°`:'Location pending'}${x.frequency?` | ${esc(x.frequency)}`:''}${x.rssi!=null?` | RSSI ${esc(x.rssi)}`:''}</small><em>${esc(formatDubaiTime(x.last_seen||x.recorded_at))}</em></button>`;}).join('');
 }
 
 function updateRidMapTargets(targets){
@@ -2232,13 +2233,15 @@ function updateMapMarkers(devices) {
     if (!Number.isFinite(Number(d.lat)) || !Number.isFinite(Number(d.lng))) return;
     const key = d.sn || d.id || `${d.lat},${d.lng}`;
     seen.add(key);
-    const kind = d.kind === "drone" ? "drone" : d.kind === "dock" ? "dock" : "device";
+    const kind = d.kind === "drone" ? "drone" : d.kind === "dock" ? "dock" : d.kind === "rid" ? "rid" : "device";
     const onlineClass = String(d.status || "").toLowerCase() || "unknown";
     const heading = Number(d.heading || 0);
     const html = kind === "drone"
       ? `<div class="map-pin drone ${onlineClass}" style="--heading:${heading}deg"><span></span></div>`
       : `<div class="map-pin ${kind} ${onlineClass}"><span></span></div>`;
-    const icon = L.divIcon({className: "map-pin-icon", html, iconSize: [28, 28], iconAnchor: [14, 14]});
+    const icon = kind === "rid"
+      ? L.icon({iconUrl:'/static/assets/rid-receiver.svg',iconSize:[40,40],iconAnchor:[20,36],popupAnchor:[0,-34]})
+      : L.divIcon({className: "map-pin-icon", html, iconSize: [28, 28], iconAnchor: [14, 14]});
     const popup = `<strong>${esc(d.name || d.sn || "Device")}</strong><br>Type: ${esc(kind)}<br>SN: ${esc(d.sn || "--")}<br>Last: ${esc(formatDubaiTime(d.last_seen))}<br>Battery: ${d.battery == null ? "--" : `${esc(Math.round(d.battery))}%`}<br>Altitude: ${d.altitude == null ? "--" : `${esc(Math.round(d.altitude))} m`}<br><button class="map-popup-action" onclick="goModule('Live Streams')">Live Stream</button>`;
     if (!mapMarkers[key]) {
       mapMarkers[key] = L.marker([Number(d.lat), Number(d.lng)], {icon}).addTo(mapInstance);
@@ -2727,6 +2730,12 @@ async function renderLicense(content) {
         </div>
         ${isExpired ? `<p class="error">License expired. Admin can stay logged in only to import a renewed license.</p>` : ""}
       </div>
+    </div>
+    <div class="license-branding card">
+      <strong>AERO SYNC</strong>
+      <span>Designed &amp; Developed by AERO NEX FZCO</span>
+      <span>2025 Aero Nex FZCO. All Rights Reserved.</span>
+      <span>Contact us : <a href="mailto:Support@aeronex.ae">Support@aeronex.ae</a></span>
     </div>
   `;
 }

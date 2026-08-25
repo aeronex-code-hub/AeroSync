@@ -2343,3 +2343,6 @@ button, input, select {
 .rid-raw-stream-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.45;color:var(--text,#e5e7eb)}
 .rid-map-card{padding:10px;min-height:0}.rid-map-canvas{height:calc(100vh - 150px);min-height:460px;width:100%;background:#0c1424}
 @media(max-width:760px){.rid-map-canvas{height:68vh;min-height:380px}.rid-raw-panel{height:92vh}}
+
+/* Patch 002 - branding and RID map marker support */
+.sidebar .footer a{color:inherit;text-decoration:none}.sidebar .footer a:hover{text-decoration:underline}.license-branding{margin-top:14px;display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}.license-branding strong{font-size:18px}.license-branding a{color:var(--primary,#6f83ff);text-decoration:none}.license-branding a:hover{text-decoration:underline}
