@@ -334,8 +334,15 @@ class RidModule:
             uid = self._first(d, "UavId", "uav_id", "uas_id", "aircraft_id", "rid_id")
             lat = self._first(d, "UavLat", "uav_lat")
             lng = self._first(d, "UavLon", "uav_lon")
-            if uid not in (None, "") and lat not in (None, "") and lng not in (None, ""):
-                found.append((str(uid), d, "terjin" if brand == "Terjin" else "generic"))
+            if uid in (None, ""):
+                continue
+            if brand == "Terjin":
+                # /api/detect reports a valid aircraft before UAV coordinates are
+                # available.  Create/refresh the track immediately; /api/locate can
+                # enrich the same UavId with position later.
+                found.append((str(uid), d, "terjin"))
+            elif lat not in (None, "") and lng not in (None, ""):
+                found.append((str(uid), d, "generic"))
         return found
 
     def handle_mqtt(self, item, raw_payload=None):
@@ -388,8 +395,13 @@ class RidModule:
                 else:
                     target = {
                         "id": uid, "uav_id": uid,
-                        "model": str(self._first(d, "UavModel", "uav_model", "model", default=old.get("model") or "") or ""),
-                        "lat": self._first(d, "UavLat", "uav_lat"), "lng": self._first(d, "UavLon", "uav_lon"),
+                        "model": str(self._first(d, "UavModel", "UavModelText", "uav_model", "model", default=old.get("model") or "") or ""),
+                        "model_no": self._first(d, "UavModelNo", "uav_model_no", default=old.get("model_no")),
+                        # Keep the last valid UAV position when /api/detect messages
+                        # arrive without UavLat/UavLon. SensorLatitude/Longitude are
+                        # receiver coordinates and must never be used as UAV position.
+                        "lat": self._first(d, "UavLat", "uav_lat", default=old.get("lat")),
+                        "lng": self._first(d, "UavLon", "uav_lon", default=old.get("lng")),
                         "altitude": self._first(d, "UavAlt", "uav_alt", "altitude", "Alt"), "height": self._first(d, "UavHeight", "uav_height", "height"),
                         "speed": self._first(d, "Velocity", "velocity", "speed"), "heading": self._first(d, "Yaw", "yaw", "heading"),
                         "pilot_lat": self._first(d, "PilotLat", "pilot_lat"), "pilot_lng": self._first(d, "PilotLon", "pilot_lon", "PilotLng"),
