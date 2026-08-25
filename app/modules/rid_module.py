@@ -189,10 +189,27 @@ class RidModule:
 
     def _match_registered(self, topic, payload):
         candidates = {x.lower() for x in self._identity_candidates(topic, payload)}
-        if not candidates:
-            return None
+        terjin_topics = set()
+        for d in self._walk_dicts(payload):
+            value = self._first(d, "Topic", "topic")
+            if value not in (None, ""):
+                terjin_topics.add(str(value).strip().lower())
+
         for row in self.registry:
-            if str(row.get("serial_no") or "").strip().lower() in candidates:
+            registered_id = str(row.get("serial_no") or "").strip().lower()
+            if not registered_id:
+                continue
+            brand = str(row.get("brand") or "ArcGine")
+            if brand == "Terjin":
+                # Terjin does not expose a receiver serial number in the documented
+                # /api/system payload.  The configured device Topic is therefore the
+                # registration/matching value entered in the existing Serial No. field.
+                if registered_id in terjin_topics:
+                    return row
+                # Keep DeviceId/legacy identity matching for existing registrations.
+                if registered_id in candidates:
+                    return row
+            elif registered_id in candidates:
                 return row
         return None
 
@@ -204,11 +221,21 @@ class RidModule:
 
         if brand == "Terjin":
             source = {}
+            # Primary Terjin matching is by the configured Topic value.  The UI field
+            # remains named Serial No. so no frontend/database format change is needed.
             for d in self._walk_dicts(payload):
-                device_id = self._first(d, "DeviceId", "DeviceID", "device_id")
-                if device_id not in (None, "") and str(device_id).strip().lower() == sn.lower():
+                source_topic = self._first(d, "Topic", "topic")
+                if source_topic not in (None, "") and str(source_topic).strip().lower() == sn.lower():
                     source = d
                     break
+            # Backward compatibility for Terjin devices previously registered using
+            # DeviceId (for example "600").
+            if not source:
+                for d in self._walk_dicts(payload):
+                    device_id = self._first(d, "DeviceId", "DeviceID", "device_id")
+                    if device_id not in (None, "") and str(device_id).strip().lower() == sn.lower():
+                        source = d
+                        break
             return {
                 "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn),
                 "brand": brand, "status": "online", "last_seen": now, "topic": topic_text,
