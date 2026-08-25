@@ -4064,12 +4064,18 @@ def dashboard_payload(cfg):
     live_map = map_data(cfg, 300)
     nvr = nvr_sync_status(cfg) if advanced else {"used_channels": 0, "enabled": False, "servers": []}
     dfr = dfr_data(cfg, 5) if advanced else {"today_count": 0, "enabled": False, "last5": []}
+    rid_module = MODULES.get("rid")
+    try:
+        rid = rid_module.status() if rid_module else {}
+    except Exception:
+        rid = {}
     channels = cfg["modules"]["live_streams"]["channels"]
     enabled = [c for c in channels if c.get("enabled")]
     return {
         "cards": [
             {"name": "Events", "value": events["count"], "status": "ready" if events["available"] else "path not set", "port": cfg["ports"]["event_api"]},
             {"name": "MQTT", "value": mqtt["count"], "status": "ready" if mqtt["available"] else "path not set", "port": cfg["ports"]["mqtt_broker"]},
+            {"name": "RID", "value": rid.get("online_sources", 0), "status": f"{rid.get('active_targets', 0)} aircraft | {rid.get('offline_sources', 0)} offline", "port": cfg["ports"]["mqtt_broker"]},
             {"name": "Media / S3", "value": media["count"], "status": "ready" if media["available"] else "storage empty", "port": cfg["ports"]["local_s3"]},
             {"name": "Live Streams", "value": len(enabled), "status": f"{len(enabled)} enabled", "port": cfg["ports"]["stream_bridge"]},
             {"name": "Live Map", "value": live_map["device_count"], "status": "ready" if live_map["device_count"] else "waiting GPS", "port": "-"},
