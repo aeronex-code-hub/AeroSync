@@ -1525,7 +1525,7 @@ async function removeRidDevice(serialNo) {
 function openRidMap(selectedId="") {
   if (ridRefreshTimer) { clearInterval(ridRefreshTimer); ridRefreshTimer=null; }
   const content=document.getElementById("content");
-  content.innerHTML=`<div class="page-head"><div><h1>RID Live Map</h1></div><button class="secondary" onclick="goModule('RID')">Back to RID</button></div><div class="card rid-map-card"><div id="ridMapCanvas" class="rid-map-canvas"><div class="map-loading">Loading map...</div></div></div>`;
+  content.innerHTML=`<div class="page-head"><div><h1>RID Live Map</h1></div><button class="secondary" onclick="goModule('RID')">Back to RID</button></div><div class="card rid-map-card"><div class="map-stage rid-map-stage"><div id="ridMapCanvas" class="rid-map-canvas"><div class="map-loading">Loading map...</div></div><div id="ridStandaloneAlerts" class="rid-map-alerts"></div></div></div>`;
   setTimeout(()=>loadRidMap(selectedId),50);
 }
 
@@ -1535,8 +1535,11 @@ async function loadRidMap(selectedId="") {
   try{
     await loadLeaflet(); if(!window.L)return;
     if(window._ridLeafletMap){window._ridLeafletMap.remove();window._ridLeafletMap=null;}
-    const targets=(data.targets||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng)));
+    const liveTargets=(data.targets||[]).filter(x=>String(x.status||'live').toLowerCase()==='live');
+    const targets=liveTargets.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng)));
     const sources=(data.sources||[]).filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng)));
+    const alertBox=document.getElementById('ridStandaloneAlerts'); if(alertBox)alertBox.innerHTML=ridMapAlertsHtml(liveTargets);
+    updateRidMapTargets(liveTargets);
     const cfg=settingsCache?.settings?.modules?.map||{};
     const selected=targets.find(x=>String(x.id)===String(selectedId)||String(x.uav_id)===String(selectedId));
     const first=selected||targets[0]||sources[0];
@@ -1890,15 +1893,20 @@ async function renderLiveMap(content) {
 }
 
 function ridMapAlertsHtml(targets){
-  return (targets||[]).slice(0,5).map(x=>{const hasPos=Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude));return `<button class="rid-map-alert" onclick="focusRidTarget('${escAttr(x.id||x.uav_id||x.track_id||'')}','${escAttr(x.track_id||x.trace_id||'')}')"><div><strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><span>${esc(x.uav_id||x.id||'')}</span></div><small>${hasPos?`${esc(x.altitude??'-')} m | ${esc(x.speed??'-')} m/s | ${esc(x.heading??x.azimuth??'-')}°`:'Location pending'}${x.frequency?` | ${esc(x.frequency)}`:''}${x.rssi!=null?` | RSSI ${esc(x.rssi)}`:''}</small><em>${esc(formatDubaiTime(x.last_seen||x.recorded_at))}</em></button>`;}).join('');
+  return (targets||[]).map(x=>{
+    const hasPos=Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude));
+    const freq=x.frequency!=null&&x.frequency!==''?(Number(x.frequency)>=1000000?`${(Number(x.frequency)/1000000).toFixed(Number(x.frequency)%1000000?1:0)} MHz`:`${x.frequency}`):'';
+    return `<button class="rid-map-alert" onclick="focusRidTarget('${escAttr(x.id||x.uav_id||x.track_id||'')}','${escAttr(x.track_id||x.trace_id||'')}')"><div class="rid-map-alert-title"><strong>⚠ Drone Detected</strong><em>${esc(formatDubaiTime(x.last_seen||x.recorded_at))}</em></div><div class="rid-map-alert-model">${esc(x.model||'RID Aircraft')}</div><div class="rid-map-alert-id">ID: ${esc(x.uav_id||x.id||'--')}</div><small>${freq?`${esc(freq)} | `:''}${x.rssi!=null?`RSSI ${esc(x.rssi)} | `:''}${hasPos?'Location available':'Location waiting'}</small><small>Receiver: ${esc(x.source_name||x.source_id||'--')}</small></button>`;
+  }).join('');
 }
 
 function updateRidMapTargets(targets){
   window._ridMapTargets={};
   const seen=new Set();
   (targets||[]).forEach(x=>{
+    const id=String(x.id||x.uav_id||x.track_id||''); if(!id)return; window._ridMapTargets[id]=x;
     const lat=Number(x.lat??x.latitude), lng=Number(x.lng??x.longitude); if(!Number.isFinite(lat)||!Number.isFinite(lng)||!mapInstance||!window.L)return;
-    const id=String(x.id||x.uav_id||x.track_id||`${lat},${lng}`), key=`rid:${id}`; seen.add(key); window._ridMapTargets[id]=x;
+    const key=`rid:${id}`; seen.add(key);
     const icon=L.divIcon({className:'map-pin-icon',html:`<div class="map-pin drone online rid-target-pin"><span></span></div>`,iconSize:[30,30],iconAnchor:[15,15]});
     const popup=`<strong>${esc(x.model||x.uav_id||'RID Aircraft')}</strong><br>RID/UAV ID: ${esc(x.uav_id||x.id||'--')}<br>Altitude: ${esc(x.altitude??'-')} m<br>Speed: ${esc(x.speed??'-')} m/s<br>Heading: ${esc(x.heading??x.azimuth??'-')}°<br>Source: ${esc(x.source_name||x.source_id||'--')}`;
     if(!mapMarkers[key]) mapMarkers[key]=L.marker([lat,lng],{icon}).addTo(mapInstance); else mapMarkers[key].setLatLng([lat,lng]);
@@ -2266,7 +2274,7 @@ async function refreshLiveMap() {
   const onlineDevices = data.online_devices || data.devices || [];
   if (list) list.innerHTML = onlineDevices.length ? onlineDevices.map(deviceListItem).join("") : `<div class="empty-state">No device data yet. Waiting for MQTT status or GPS payloads.</div>`;
   updateMapMarkers(data.devices || []);
-  const ridTargets=(ridData.targets||[]).filter(x=>Number.isFinite(Number(x.lat??x.latitude))&&Number.isFinite(Number(x.lng??x.longitude)));
+  const ridTargets=(ridData.targets||[]).filter(x=>String(x.status||'live').toLowerCase()==='live');
   updateRidMapTargets(ridTargets);
   const alertBox=document.getElementById('ridMapAlerts'); if(alertBox)alertBox.innerHTML=ridMapAlertsHtml(ridTargets);
 }
