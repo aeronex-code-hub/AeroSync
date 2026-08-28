@@ -9,6 +9,7 @@ class RidModule:
     name = "rid"
     MAX_DEVICES = 5
     OFFLINE_SECONDS = 300
+    TARGET_OFFLINE_SECONDS = 60
     BRANDS = ("Terjin", "ArcGine")
 
     def __init__(self, data_dir: Path, get_settings):
@@ -487,16 +488,24 @@ class RidModule:
                 src["status"] = "online" if online else "offline"
                 sources.append(src)
 
+            # Live aircraft are intentionally short-lived. If the RID receiver stops
+            # reporting a UAV for 60 seconds, remove it from the live state. The
+            # historical JSONL records remain available through RID History.
+            expired_ids = []
             targets = []
-            for target in self.targets.values():
+            for uid, target in self.targets.items():
                 t = dict(target)
                 try:
-                    age = now - datetime.fromisoformat(t["last_seen"]).timestamp()
-                    if age > self.OFFLINE_SECONDS:
-                        t["status"] = "lost"
+                    age = now - datetime.fromisoformat(str(t.get("last_seen") or "")).timestamp()
                 except Exception:
-                    pass
+                    age = self.TARGET_OFFLINE_SECONDS + 1
+                if age > self.TARGET_OFFLINE_SECONDS:
+                    expired_ids.append(uid)
+                    continue
+                t["status"] = "live"
                 targets.append(t)
+            for uid in expired_ids:
+                self.targets.pop(uid, None)
 
             return {
                 "ok": True,
@@ -504,11 +513,12 @@ class RidModule:
                 "source_count": len(sources),
                 "online_sources": sum(1 for s in sources if s.get("status") == "online"),
                 "target_count": len(targets),
-                "active_targets": sum(1 for t in targets if t.get("status") == "live"),
+                "active_targets": len(targets),
                 "offline_sources": sum(1 for s in sources if s.get("status") != "online"),
-                "active_tracks": len({str(t.get("track_id") or t.get("trace_id") or t.get("id")) for t in targets if t.get("status") == "live"}),
+                "active_tracks": len({str(t.get("track_id") or t.get("trace_id") or t.get("id")) for t in targets}),
                 "max_devices": self.MAX_DEVICES,
                 "offline_seconds": self.OFFLINE_SECONDS,
+                "target_offline_seconds": self.TARGET_OFFLINE_SECONDS,
                 "sources": sorted(sources, key=lambda x: x.get("last_seen", ""), reverse=True),
                 "targets": sorted(targets, key=lambda x: x.get("last_seen", ""), reverse=True),
                 "recent_messages": list(reversed(self.recent_messages[-20:])),
