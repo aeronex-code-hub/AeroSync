@@ -2372,7 +2372,7 @@ button, input, select {
 
 .hero-resource-label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2393,12 +2393,12 @@ button, input, select {
 
 .hero-resource-summary small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
   margin-bottom: 2px;
 }
 
 .hero-resource-summary strong {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
 }
 
