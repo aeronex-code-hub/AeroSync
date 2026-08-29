@@ -189,6 +189,8 @@ class RidModule:
         return {x for x in candidates if x}
 
     def _match_registered(self, topic, payload):
+        topic_text = str(topic or "")
+        topic_lower = topic_text.lower()
         candidates = {x.lower() for x in self._identity_candidates(topic, payload)}
         terjin_topics = set()
         for d in self._walk_dicts(payload):
@@ -196,22 +198,41 @@ class RidModule:
             if value not in (None, ""):
                 terjin_topics.add(str(value).strip().lower())
 
+        # Protocol classification must happen before receiver identity matching.
+        # DJI/FH2 Telemetry Data Forwarding / MQTT Bridge legitimately uses
+        # thing/product/{sn}/... topics.  Those messages remain available to the
+        # normal MQTT/FH2 pipeline and must never make an ArcGine RID receiver online.
+        is_arcgine_rgs = topic_lower.startswith("device/") and any(marker in topic_lower for marker in (
+            "/receiver_heart/", "/receiver_pos/", "/receiver_json_astm/", "/adsb/"
+        ))
+        # Terjin's documented API topics use a configurable prefix followed by /api/*.
+        # Match the known RID endpoints by suffix so a custom prefix remains supported.
+        is_terjin_api = any(topic_lower.endswith(suffix) for suffix in (
+            "/api/system", "/api/detect", "/api/locate", "/api/aoa"
+        ))
+
         for row in self.registry:
             registered_id = str(row.get("serial_no") or "").strip().lower()
             if not registered_id:
                 continue
             brand = str(row.get("brand") or "ArcGine")
             if brand == "Terjin":
+                if not is_terjin_api:
+                    continue
                 # Terjin does not expose a receiver serial number in the documented
-                # /api/system payload.  The configured device Topic is therefore the
-                # registration/matching value entered in the existing Serial No. field.
+                # /api/system payload. The configured Topic is the primary identity.
                 if registered_id in terjin_topics:
                     return row
-                # Keep DeviceId/legacy identity matching for existing registrations.
+                # Backward compatibility for installations registered with DeviceId.
                 if registered_id in candidates:
                     return row
-            elif registered_id in candidates:
-                return row
+            else:
+                if not is_arcgine_rgs:
+                    continue
+                # ArcGine RGS topics end with the registered receiver serial number.
+                parts = [p for p in topic_text.split("/") if p]
+                if parts and str(parts[-1]).strip().lower() == registered_id:
+                    return row
         return None
 
     def _source_info(self, topic, payload, registered):
@@ -284,39 +305,10 @@ class RidModule:
         if topic_text.startswith("device/"):
             return {"id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn), "brand": brand, "last_seen": now, "topic": topic_text}
 
-        # Backward-compatible generic ArcGine/DJI-style OSD data. This is retained so
-        # existing deployed receivers continue to expose health fields if they publish them.
-        data = payload.get("data") if isinstance(payload, dict) else None
-        host = data.get("host") if isinstance(data, dict) and isinstance(data.get("host"), dict) else {}
-        lat = self._first(host, "latitude", "Latitude", "lat", "Lat")
-        lng = self._first(host, "longitude", "Longitude", "lng", "Lng", "lon", "Lon")
-        altitude = self._first(host, "height", "Height", "altitude", "Altitude")
-        try:
-            if float(lat or 0) == 0 and float(lng or 0) == 0: lat = lng = None
-        except Exception:
-            lat = lng = None
-        battery = host.get("battery") if isinstance(host.get("battery"), dict) else {}
-        network = host.get("network_state") if isinstance(host.get("network_state"), dict) else {}
-        position = host.get("position_state") if isinstance(host.get("position_state"), dict) else {}
-        storage = host.get("storage") if isinstance(host.get("storage"), dict) else {}
-        sub = host.get("sub_device") if isinstance(host.get("sub_device"), dict) else {}
-        return {
-            "id": sn, "serial_no": sn, "name": str(registered.get("device_name") or sn), "brand": brand,
-            "status": "online", "last_seen": now, "topic": topic_text,
-            "biz_code": str(payload.get("biz_code") or "") if isinstance(payload, dict) else "",
-            "lat": lat, "lng": lng, "altitude": altitude, "heading": self._first(host, "heading", "Heading"),
-            "country": self._first(host, "country", "Country", default=""),
-            "battery_percent": self._first(battery, "capacity_percent", "capacity", default=None),
-            "battery_voltage": self._first(battery, "voltage", default=self._first(host, "battery_voltage")),
-            "battery_temperature": self._first(battery, "temperature", default=None),
-            "network_type": self._first(network, "type", default=None), "network_quality": self._first(network, "quality", default=None),
-            "network_rate": self._first(network, "rate", default=None), "gps_number": self._first(position, "gps_number", default=None),
-            "rtk_number": self._first(position, "rtk_number", default=None), "gps_fixed": self._first(position, "is_fixed", default=None),
-            "poe_status": self._first(host, "poe_status", default=None), "power_mode": self._first(host, "power_mode", "electric_supply_mode", default=None),
-            "storage_total": self._first(storage, "total", default=None), "storage_used": self._first(storage, "used", default=None),
-            "device_paired": self._first(sub, "device_paired", default=None), "sub_device_online_status": self._first(sub, "device_online_status", default=None),
-            "mode_code": self._first(host, "mode_code", "flighttask_step_code", default=None),
-        }
+        # Any non-RGS payload (including DJI/FH2 thing/product/{sn}/...) is not
+        # ArcGine RID receiver data. Return no source update so the MQTT/FH2
+        # pipeline can process it normally.
+        return None
 
     def _targets(self, topic, payload, brand):
         found = []
@@ -360,6 +352,8 @@ class RidModule:
             now = datetime.now(timezone.utc).isoformat()
             self.message_count += 1
             incoming = self._source_info(item.get("topic"), payload, registered)
+            if not incoming:
+                return False
             old_source = self.sources.get(sn, {})
             # Keep previously learned values when a later OSD payload omits them.
             merged = dict(old_source)
