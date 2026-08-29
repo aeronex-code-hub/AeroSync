@@ -572,32 +572,40 @@ async function renderDashboard(content) {
   if (!isActiveContent(content, "Dashboard")) return;
   const eventCard = status.cards.find(c => c.name === "Events") || {};
   const mqttCard = status.cards.find(c => c.name === "MQTT") || {};
-  const mediaCard = status.cards.find(c => c.name === "Media / S3") || {};
-  const streamCard = status.cards.find(c => c.name === "Live Streams") || {};
+  const dfrCard = status.cards.find(c => c.name === "DFR") || {};
   const resources = status.resources || {};
   const mem = resources.memory || {};
   const cpu = resources.cpu || {};
   const net = resources.network || {};
-  const dashboardCards = status.cards.filter(m => !["Logs", "Settings", "OpenAPI"].includes(m.name) && moduleAllowedByEdition(m.name));
+  const primaryDisk = (resources.disks || [])[0] || {};
   const openApiCard = status.cards.find(c => c.name === "OpenAPI") || {};
   const openApiConnections = settingsCache?.settings?.modules?.openapi?.connections || [];
   const openApiConnectionCount = openApiConnections.filter(c => c && c.enabled !== false).length;
   const openApiConnected = String(openApiCard.value || "").toLowerCase() === "ready" || openApiConnectionCount > 0;
   const advancedDashboard = currentEdition() === "Advanced";
-  const mediaStatus = (status.recent_media || []).slice(0, 5).map(f => ({
-    level: "info",
-    title: f.name || "Media File",
-    message: `${formatBytes(f.size || 0)}${f.modified ? ` | ${f.modified}` : ""}`,
-    source: f.path || ""
-  }));
-  dashboardNvrServers = dashboardNvrs(status.nvr_servers || []);
-  const dfrCard = status.cards.find(c => c.name === "DFR") || {};
+  let ridDashboard = {message_count: 0, status_messages: [], sources: []};
+  if (moduleAllowedByEdition("RID")) {
+    try { ridDashboard = await api("/api/rid"); } catch (_) {}
+  }
+  const dashboardOrder = ["MQTT", "Events", "Live Map", "RID", "OpenAPI", "DFR", "Live Streams", "NVR Sync", "Media / S3"];
+  const dashboardCardMap = new Map(status.cards.map(card => [card.name, card]));
+  const dashboardModules = dashboardOrder.filter(name => {
+    if (name === "OpenAPI") return advancedDashboard && hasPermission("openapi");
+    return dashboardCardMap.has(name) && moduleAllowedByEdition(name);
+  });
   const fh2Mode = String(settingsCache?.settings?.flight_hub?.mode || "cloud").toLowerCase() === "onprem" ? "onprem" : "cloud";
   const canChangeFh2Mode = hasPermission("settings");
   content.innerHTML = `
     <div class="dash-hero">
-      <div>
+      <div class="dash-hero-title">
         <h1>Operation Center</h1>
+      </div>
+      <div class="hero-resource-summary" title="Live Server Resources">
+        <span class="hero-resource-label">Server Resources</span>
+        <span><small>CPU</small><strong>${cpu.percent == null ? "--" : `${esc(cpu.percent)}%`}</strong></span>
+        <span><small>RAM</small><strong>${mem.percent == null ? "--" : `${esc(mem.percent)}%`}</strong></span>
+        <span><small>Storage</small><strong>${primaryDisk.percent == null ? "--" : `${esc(primaryDisk.percent)}%`}</strong></span>
+        <span><small>Network</small><strong>${formatBandwidth(net.download_bps)} ↓ / ${formatBandwidth(net.upload_bps)} ↑</strong></span>
       </div>
       <div class="hero-status">
         <span class="pill"><span class="dot"></span> Secure HTTPS</span>
@@ -614,88 +622,61 @@ async function renderDashboard(content) {
         </label>
       </div>
     </div>
-    <div class="kpi-grid">
-      ${dashboardCards.map(m => `
-        <div class="module-button" onclick="goModule('${escAttr(m.name)}')">
-          <div class="module-card-head">
-            <strong>${esc(m.name)}</strong>
-            <span class="module-head-actions">
-              <button class="icon-btn" title="Open ${escAttr(m.name)} separately" onclick="event.stopPropagation(); openModuleSeparate('${escAttr(m.name)}')">&#8599;</button>
-              <span class="led ${moduleLedClass(m)}"></span>
-            </span>
-          </div>
-          <span class="kpi-value">${esc(m.value)}</span>
-          <span class="muted">${esc(m.status)}</span>
-          <div class="module-card-foot">
-            <span class="pill">Port ${esc(m.port)}</span>
-          </div>
-        </div>
-      `).join("")}
-      ${advancedDashboard && hasPermission("openapi") ? `
-        <div class="module-button" onclick="goModule('OpenAPI')">
-          <div class="module-card-head">
-            <strong>OpenAPI</strong>
-            <span class="module-head-actions">
-              <button class="icon-btn" title="Open OpenAPI separately" onclick="event.stopPropagation(); openModuleSeparate('OpenAPI')">&#8599;</button>
-              <span class="led ${openApiConnected ? "ok" : "warn"}"></span>
-            </span>
-          </div>
-          <span class="kpi-value" style="font-size:20px">API Integration</span>
-          <span class="muted">Status: ${openApiConnected ? "Connected" : "Not configured"}</span>
-          <div class="module-card-foot">
-            <span class="pill">Connections: ${esc(openApiConnectionCount)}</span>
-            <span class="pill">Open &#9654;</span>
-          </div>
-        </div>
-      ` : ""}
+    <div class="kpi-grid dashboard-module-grid">
+      ${dashboardModules.map(name => {
+        if (name === "OpenAPI") {
+          return `
+            <div class="module-button" onclick="goModule('OpenAPI')">
+              <div class="module-card-head">
+                <strong>OpenAPI</strong>
+                <span class="module-head-actions">
+                  <button class="icon-btn" title="Open OpenAPI separately" onclick="event.stopPropagation(); openModuleSeparate('OpenAPI')">&#8599;</button>
+                  <span class="led ${openApiConnected ? "ok" : "warn"}"></span>
+                </span>
+              </div>
+              <span class="kpi-value dashboard-openapi-value">API Integration</span>
+              <span class="muted">Status: ${openApiConnected ? "Connected" : "Not configured"}</span>
+              <div class="module-card-foot">
+                <span class="pill">Connections: ${esc(openApiConnectionCount)}</span>
+                <span class="pill">Open &#9654;</span>
+              </div>
+            </div>`;
+        }
+        const m = dashboardCardMap.get(name) || {};
+        return `
+          <div class="module-button" onclick="goModule('${escAttr(m.name || name)}')">
+            <div class="module-card-head">
+              <strong>${esc(name === "Events" ? "Event API" : (m.name || name))}</strong>
+              <span class="module-head-actions">
+                <button class="icon-btn" title="Open ${escAttr(m.name || name)} separately" onclick="event.stopPropagation(); openModuleSeparate('${escAttr(m.name || name)}')">&#8599;</button>
+                <span class="led ${moduleLedClass(m)}"></span>
+              </span>
+            </div>
+            <span class="kpi-value">${esc(m.value ?? 0)}</span>
+            <span class="muted">${esc(m.status || "")}</span>
+            <div class="module-card-foot">
+              <span class="pill">Port ${esc(m.port ?? "-")}</span>
+            </div>
+          </div>`;
+      }).join("")}
     </div>
     <div class="dashboard-panels">
       <div class="card dashboard-panel-card">
-        <div class="panel-title"><h3>EventAPI Message Status</h3><span class="pill">${esc(eventCard.value ?? 0)} received</span></div>
-        ${statusMessageList(status.event_status_messages, "No EventAPI messages received yet.")}
+        <div class="panel-title"><h3>MQTT Message Status</h3><span class="pill">${esc(mqttCard.value ?? 0)} captured</span></div>
+        ${statusMessageList(status.mqtt_status_messages, "No readable MQTT status yet.")}
+      </div>
+      <div class="card dashboard-panel-card">
+        <div class="panel-title"><h3>RID Message Status</h3><span class="pill">${esc(ridDashboard.message_count ?? 0)} received</span></div>
+        ${statusMessageList(ridDashboard.status_messages, "No RID status yet.")}
       </div>
       ${advancedDashboard ? `<div class="card dashboard-panel-card">
         <div class="panel-title"><h3>DFR Message Status</h3><span class="pill">${esc(dfrCard.value ?? 0)} today</span></div>
         ${statusMessageList(status.dfr_status_messages, "No DFR events received yet.")}
       </div>` : ""}
       <div class="card dashboard-panel-card">
-        <div class="panel-title"><h3>MQTT Message Status</h3><span class="pill">${esc(mqttCard.value ?? 0)} captured</span></div>
-        ${statusMessageList(status.mqtt_status_messages, "No readable MQTT status yet.")}
+        <div class="panel-title"><h3>EventAPI Message Status</h3><span class="pill">${esc(eventCard.value ?? 0)} received</span></div>
+        ${statusMessageList(status.event_status_messages, "No EventAPI messages received yet.")}
       </div>
-      ${advancedDashboard ? `<div class="card dashboard-panel-card">
-        <div class="panel-title"><h3>Recent Media</h3><span class="pill">${esc(mediaCard.value ?? 0)} files</span></div>
-        ${statusMessageList(mediaStatus, "No media files received yet.")}
-      </div>` : ""}
-      <div class="card dashboard-resource-card">
-        <div class="panel-title"><h3>Server Resources</h3><span class="pill">Live</span></div>
-        <div class="resource-grid">
-          <div><span>CPU</span><strong>${cpu.percent == null ? "Warming" : `${esc(cpu.percent)}%`}</strong><small>${esc(cpu.cores || "--")} cores</small></div>
-          <div><span>RAM</span><strong>${mem.percent == null ? "N/A" : `${esc(mem.percent)}%`}</strong><small>${formatBytes(mem.used || 0)} / ${formatBytes(mem.total || 0)}</small></div>
-        </div>
-        <div class="mini-list resource-list">
-          <div><strong>Network:</strong> Down ${formatBandwidth(net.download_bps)} | Up ${formatBandwidth(net.upload_bps)} | Clients ${esc(net.clients ?? 0)}</div>
-          ${(resources.disks || []).slice(0, 4).map(d => `<div><strong>${esc(d.label)}</strong> ${esc(d.percent ?? "--")}% used | Free ${formatBytes(d.free || 0)}</div>`).join("") || `<div>No drive data available</div>`}
-          ${(resources.gpu || []).slice(0, 2).map(g => `<div><strong>GPU</strong> ${esc(g.name || "Not available")}</div>`).join("")}
-        </div>
-      </div>
-      ${advancedDashboard && dashboardNvrServers.length ? `
-        <div class="card dashboard-panel-card dashboard-nvr-card">
-          <div class="panel-title"><h3>NVR</h3><span class="pill">${esc(dashboardNvrServers.length)} configured</span></div>
-          <div class="nvr-dashboard-list">
-            ${dashboardNvrServers.map((nvr, index) => `
-              <button class="nvr-dashboard-item" onclick="openNvrWeb(${index}, event)">
-                <span>
-                  <strong>${esc(nvr.name || `NVR ${index + 1}`)}</strong>
-                  <small>${esc(nvr.host || "--")}</small>
-                </span>
-                <span class="module-head-actions">
-                  <span class="icon-btn" title="Open ${escAttr(nvr.name || `NVR ${index + 1}`)} web interface">&#8599;</span>
-                </span>
-              </button>
-            `).join("")}
-          </div>
-        </div>
-      ` : ""}
     </div>
   `;
 }
